@@ -3,6 +3,13 @@ package dependencies
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"unicode"
+
 	"github.com/jfrog/jfrog-cli-go/jfrog-cli/artifactory/utils"
 	"github.com/jfrog/jfrog-cli-go/jfrog-cli/artifactory/utils/golang"
 	"github.com/jfrog/jfrog-cli-go/jfrog-cli/utils/config"
@@ -13,12 +20,6 @@ import (
 	"github.com/jfrog/jfrog-client-go/utils/io/fileutils"
 	"github.com/jfrog/jfrog-client-go/utils/io/fileutils/checksum"
 	"github.com/jfrog/jfrog-client-go/utils/log"
-	"io/ioutil"
-	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
-	"unicode"
 )
 
 // Collects the dependencies of the project
@@ -41,10 +42,22 @@ func CollectProjectDependencies(targetRepo string, cache *golang.DependenciesCac
 	return projectDependencies, nil
 }
 
-func downloadDependencies(targetRepo string, cache *golang.DependenciesCache, depSlice map[string]bool, details *config.ArtifactoryDetails) (map[string]bool, error) {
+func downloadDependencies(targetRepo string, cache *golang.DependenciesCache, depSlice map[string]bool, details *config.ArtifactoryDetails) (dependenciesMap map[string]bool, downloadError error) {
 	client := httpclient.NewDefaultHttpClient()
 	cacheDependenciesMap := cache.GetMap()
-	dependenciesMap := map[string]bool{}
+	dependenciesMap = map[string]bool{}
+
+	sumFileContent, sumFileStat, err := golang.GetAndRemoveGoSumFile()
+	if err != nil {
+		return dependenciesMap, err
+	}
+	defer func() {
+		err := golang.RestoreGoSumFile(sumFileContent, sumFileStat)
+		if err != nil {
+			downloadError = err
+		}
+	}()
+
 	for module := range depSlice {
 		nameAndVersion := strings.Split(module, "@")
 		resp, err := performHeadRequest(details, client, targetRepo, nameAndVersion[0], nameAndVersion[1])
