@@ -2,12 +2,6 @@ package golang
 
 import (
 	"errors"
-	"github.com/jfrog/jfrog-cli-go/jfrog-cli/artifactory/utils"
-	"github.com/jfrog/jfrog-cli-go/jfrog-cli/utils/config"
-	"github.com/jfrog/jfrog-client-go/utils/errorutils"
-	"github.com/jfrog/jfrog-client-go/utils/io/fileutils"
-	"github.com/jfrog/jfrog-client-go/utils/log"
-	"github.com/mattn/go-shellwords"
 	"io"
 	"io/ioutil"
 	"net/url"
@@ -15,6 +9,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/jfrog/jfrog-cli-go/jfrog-cli/artifactory/utils"
+	"github.com/jfrog/jfrog-cli-go/jfrog-cli/utils/config"
+	"github.com/jfrog/jfrog-client-go/utils/errorutils"
+	"github.com/jfrog/jfrog-client-go/utils/io/fileutils"
+	"github.com/jfrog/jfrog-client-go/utils/log"
+	shellwords "github.com/mattn/go-shellwords"
 )
 
 const GOPROXY = "GOPROXY"
@@ -117,8 +118,55 @@ func DownloadDependency(dependencyName string) error {
 		return err
 	}
 
+	log.Debug("Running go mod download -json", dependencyName)
+
 	goCmd.Command = []string{"mod", "download", "-json", dependencyName}
 	return utils.RunCmd(goCmd)
+}
+
+func GetAndRemoveGoSumFile() (sumFileContent []byte, sumFileStat os.FileInfo, err error) {
+	projectDir, err := GetProjectRoot()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sumFileExists, err := fileutils.IsFileExists(filepath.Join(projectDir, "go.sum"), false)
+	log.Debug("Sum file exists:", sumFileExists)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if sumFileExists {
+		sumFileContent, sumFileStat, err = GetFileDetails(filepath.Join(projectDir, "go.sum"))
+		if err != nil {
+			return nil, nil, err
+		}
+		log.Debug("Removing file:", filepath.Join(projectDir, "go.sum"))
+		err = os.Remove(filepath.Join(projectDir, "go.sum"))
+		if err != nil {
+			return nil, nil, err
+		}
+		return sumFileContent, sumFileStat, nil
+	} else {
+		return nil, nil, nil
+	}
+}
+
+func RestoreGoSumFile(sumFileContent []byte, sumFileStat os.FileInfo) error {
+	projectDir, err := GetProjectRoot()
+	if err != nil {
+		return err
+	}
+
+	if sumFileStat != nil {
+		log.Debug("Restoring file:", filepath.Join(projectDir, "go.sum"))
+		err = ioutil.WriteFile(filepath.Join(projectDir, "go.sum"), sumFileContent, sumFileStat.Mode())
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Runs go mod graph command and returns slice of the dependencies
@@ -140,6 +188,7 @@ func GetDependenciesGraph() (map[string]bool, error) {
 		return nil, err
 	}
 	sumFileExists, err := fileutils.IsFileExists(filepath.Join(projectDir, "go.sum"), false)
+	log.Debug("Sum file exists:", sumFileExists)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +199,7 @@ func GetDependenciesGraph() (map[string]bool, error) {
 		if err != nil {
 			return nil, err
 		}
+		log.Debug("Removing file:", filepath.Join(projectDir, "go.sum"))
 		err = os.Remove(filepath.Join(projectDir, "go.sum"))
 		if err != nil {
 			return nil, err
